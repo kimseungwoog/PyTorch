@@ -2,7 +2,8 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { ClientMessage, Interval, OrderRequest, ServerMessage, ServerStatus } from '../../shared/types';
+import { analyze, ratingLabel } from '../../shared/analysis';
+import type { ClientMessage, Interval, OrderRequest, ScreenerRow, ServerMessage, ServerStatus } from '../../shared/types';
 import { INTERVAL_SEC } from '../../shared/market';
 import { PaperBroker } from './broker/paper';
 import { OrderError } from './broker/types';
@@ -53,8 +54,41 @@ app.get('/api/quotes', async (_req, res) => res.json(await market.getQuotes()));
 app.get('/api/candles/:symbol', async (req, res) => {
   const interval = String(req.query.interval ?? '1d') as Interval;
   if (!(interval in INTERVAL_SEC)) throw new OrderError('지원하지 않는 봉 주기입니다.');
-  const count = Math.min(Number(req.query.count ?? 300) || 300, 500);
+  const count = Math.min(Number(req.query.count ?? 300) || 300, 1_000);
   res.json(await market.getCandles(req.params.symbol, interval, count));
+});
+
+// 스크리너: 전 종목의 기술 평가를 한 번에 계산한다.
+app.get('/api/screener', async (req, res) => {
+  const interval = String(req.query.interval ?? '1d') as Interval;
+  if (!(interval in INTERVAL_SEC)) throw new OrderError('지원하지 않는 봉 주기입니다.');
+  const stocks = await market.listStocks();
+  const quotes = new Map((await market.getQuotes()).map((q) => [q.symbol, q]));
+  const rows: ScreenerRow[] = [];
+  for (const s of stocks) {
+    const q = quotes.get(s.symbol);
+    if (!q) continue;
+    const candles = await market.getCandles(s.symbol, interval, 300);
+    const a = analyze(candles);
+    // 거래량 배수는 진행 중인 마지막 봉을 빼고 확정 봉으로 계산한다.
+    const done = candles.slice(0, -1);
+    const prior = done.slice(-21, -1);
+    const avg = prior.reduce((x, c) => x + c.volume, 0) / (prior.length || 1);
+    rows.push({
+      symbol: s.symbol,
+      name: s.name,
+      price: q.price,
+      changeRate: q.changeRate,
+      gapRate: (q.open - q.prevClose) / q.prevClose,
+      volumeMultiple: prior.length === 20 && avg > 0 ? done[done.length - 1].volume / avg : null,
+      value: q.value,
+      score: a.scores.all,
+      rating: ratingLabel(a.scores.all),
+      candidate: a.candidate,
+      reason: a.reason,
+    });
+  }
+  res.json(rows);
 });
 
 app.get('/api/orderbook/:symbol', async (req, res) => res.json(await market.getOrderbook(req.params.symbol)));

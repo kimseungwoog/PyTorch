@@ -1,58 +1,219 @@
 import {
   CandlestickSeries,
   createChart,
+  createSeriesMarkers,
   HistogramSeries,
   LineSeries,
+  LineStyle,
   type ISeriesApi,
+  type SeriesMarker,
+  type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import { useEffect, useRef, useState } from 'react';
-import { applyTick, KST_OFFSET_SEC } from '../../../shared/market';
+import { useEffect, useRef } from 'react';
+import {
+  adx,
+  bollinger,
+  donchian,
+  ema,
+  macd,
+  mfi,
+  rsi,
+  sma,
+  stochK,
+  supertrend,
+  vwap,
+  type Num,
+} from '../../../shared/indicators';
+import { KST_OFFSET_SEC } from '../../../shared/market';
+import { replay, STRATEGIES } from '../../../shared/strategies';
 import type { Candle, Interval } from '../../../shared/types';
 import { dir, pct, signed, won } from '../format';
-import { fetchCandles, useStore } from '../store';
+import { useStore, type IndicatorConfig } from '../store';
 
-const INTERVALS: Array<[Interval, string]> = [
+export const INTERVALS: Array<[Interval, string]> = [
   ['1m', '1분'],
   ['5m', '5분'],
   ['15m', '15분'],
   ['1h', '1시간'],
+  ['4h', '4시간'],
   ['1d', '일'],
+  ['1w', '주'],
 ];
-const MA = [
-  { n: 5, color: '#f5a623' },
-  { n: 20, color: '#a66cff' },
-  { n: 60, color: '#2bb673' },
-];
+
 const UP = '#f04452';
 const DOWN = '#3182f6';
+const PALETTE = ['#f5a623', '#a66cff', '#2bb673', '#ff7ab6', '#4cc9f0', '#e0e0e0'];
+const SUB_HEIGHT = 92;
 
 // 차트 축을 한국 시간으로 보이게 한다.
 const t = (c: Candle) => (c.time + KST_OFFSET_SEC) as UTCTimestamp;
 
-function smaAt(candles: Candle[], i: number, n: number): number | undefined {
-  if (i < n - 1) return undefined;
-  let sum = 0;
-  for (let k = i - n + 1; k <= i; k++) sum += candles[k].close;
-  return sum / n;
+type Feed = (candles: Candle[]) => void;
+type Chart = ReturnType<typeof createChart>;
+
+// 설정에 맞춰 시리즈를 만들고, 봉이 바뀔 때 다시 채워 넣는 함수 목록을 돌려준다.
+function buildSeries(chart: Chart, cfg: IndicatorConfig, legend: Array<[string, string]>): Feed[] {
+  const feeds: Feed[] = [];
+  let pane = 0;
+
+  const line = (paneIndex: number, color: string, label?: string, dashed = false) => {
+    const s = chart.addSeries(
+      LineSeries,
+      {
+        color,
+        lineWidth: 1,
+        lineStyle: dashed ? LineStyle.Dashed : LineStyle.Solid,
+        priceLineVisible: false,
+        lastValueVisible: paneIndex > 0,
+        crosshairMarkerVisible: false,
+      },
+      paneIndex,
+    );
+    if (label) legend.push([label, color]);
+    return s;
+  };
+  const fill = (s: ISeriesApi<'Line'>, candles: Candle[], values: Num[]) =>
+    s.setData(candles.flatMap((c, i) => (values[i] === null ? [] : [{ time: t(c), value: values[i]! }])));
+  const closes = (c: Candle[]) => c.map((x) => x.close);
+  const guide = (s: ISeriesApi<'Line'>, ...levels: number[]) =>
+    levels.forEach((price) =>
+      s.createPriceLine({ price, color: '#3a404c', lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false }),
+    );
+
+  if (cfg.ma) {
+    cfg.maLengths.forEach((n, i) => {
+      const s = line(0, PALETTE[i % PALETTE.length], `MA${n}`);
+      feeds.push((c) => fill(s, c, sma(closes(c), n)));
+    });
+  }
+  if (cfg.ema) {
+    [20, 50].forEach((n, i) => {
+      const s = line(0, ['#4cc9f0', '#ff7ab6'][i], `EMA${n}`, true);
+      feeds.push((c) => fill(s, c, ema(closes(c), n)));
+    });
+  }
+  if (cfg.boll) {
+    const [u, m, l] = [line(0, '#7f8ea3', 'BOLL(20,2)'), line(0, '#7f8ea3', undefined, true), line(0, '#7f8ea3')];
+    feeds.push((c) => {
+      const b = bollinger(closes(c));
+      fill(u, c, b.upper);
+      fill(m, c, b.mid);
+      fill(l, c, b.lower);
+    });
+  }
+  if (cfg.donchian) {
+    const [u, l] = [line(0, '#2bb673', 'DC(20)'), line(0, '#2bb673')];
+    feeds.push((c) => {
+      const d = donchian(c);
+      fill(u, c, d.upper);
+      fill(l, c, d.lower);
+    });
+  }
+  if (cfg.vwap) {
+    const s = line(0, '#ffd166', 'VWAP');
+    feeds.push((c) => fill(s, c, vwap(c)));
+  }
+  if (cfg.supertrend) {
+    const [upS, downS] = [line(0, UP, 'Supertrend(10,3)'), line(0, DOWN)];
+    feeds.push((c) => {
+      const st = supertrend(c);
+      fill(upS, c, st.line.map((v, i) => (st.up[i] ? v : null)));
+      fill(downS, c, st.line.map((v, i) => (st.up[i] ? null : v)));
+    });
+  }
+
+  if (cfg.volume) {
+    const p = ++pane;
+    const s = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceLineVisible: false }, p);
+    feeds.push((c) =>
+      s.setData(
+        c.map((x) => ({
+          time: t(x),
+          value: x.volume,
+          color: x.close >= x.open ? 'rgba(240,68,82,.5)' : 'rgba(49,130,246,.5)',
+        })),
+      ),
+    );
+  }
+  if (cfg.rsi) {
+    const s = line(++pane, '#4c8dff', 'RSI(14)');
+    guide(s, 30, 70);
+    feeds.push((c) => fill(s, c, rsi(closes(c))));
+  }
+  if (cfg.macd) {
+    const p = ++pane;
+    const hist = chart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false }, p);
+    const [m, sig] = [line(p, '#4c8dff', 'MACD(12,26,9)'), line(p, '#f5a623')];
+    feeds.push((c) => {
+      const r = macd(closes(c));
+      fill(m, c, r.macd);
+      fill(sig, c, r.signal);
+      hist.setData(
+        c.flatMap((x, i) =>
+          r.hist[i] === null
+            ? []
+            : [{ time: t(x), value: r.hist[i]!, color: r.hist[i]! >= 0 ? 'rgba(240,68,82,.5)' : 'rgba(49,130,246,.5)' }],
+        ),
+      );
+    });
+  }
+  if (cfg.adx) {
+    const p = ++pane;
+    const [a, plus, minus] = [line(p, '#f5a623', 'ADX·DI(14)'), line(p, UP), line(p, DOWN)];
+    guide(a, 20);
+    feeds.push((c) => {
+      const r = adx(c);
+      fill(a, c, r.adx);
+      fill(plus, c, r.plusDI);
+      fill(minus, c, r.minusDI);
+    });
+  }
+  if (cfg.stoch) {
+    const s = line(++pane, '#a66cff', 'Stoch %K(14)');
+    guide(s, 20, 80);
+    feeds.push((c) => fill(s, c, stochK(c)));
+  }
+  if (cfg.mfi) {
+    const s = line(++pane, '#2bb673', 'MFI(14)');
+    guide(s, 20, 80);
+    feeds.push((c) => fill(s, c, mfi(c)));
+  }
+
+  chart.panes().forEach((p, i) => i > 0 && p.setHeight(SUB_HEIGHT));
+  return feeds;
 }
+
+const SUB_KEYS = ['volume', 'rsi', 'macd', 'adx', 'stoch', 'mfi'] as const;
 
 export function ChartPanel() {
   const selected = useStore((s) => s.selected);
   const stock = useStore((s) => s.stocks.find((x) => x.symbol === s.selected));
   const quote = useStore((s) => s.quotes[s.selected]);
-  const [interval, setIntervalKey] = useState<Interval>('5m');
-  const [showMa, setShowMa] = useState(true);
+  const interval = useStore((s) => s.interval);
+  const indicators = useStore((s) => s.indicators);
+  const strategyId = useStore((s) => s.strategyId);
+  const { setChartInterval, openModal } = useStore();
   const el = useRef<HTMLDivElement>(null);
+  const legendEl = useRef<HTMLDivElement>(null);
+
+  const subPanes = SUB_KEYS.filter((k) => indicators[k]).length;
+  const strategy = STRATEGIES.find((s) => s.id === strategyId);
 
   useEffect(() => {
-    if (!el.current || !selected) return;
+    if (!el.current) return;
     const chart = createChart(el.current, {
       autoSize: true,
-      layout: { background: { color: 'transparent' }, textColor: '#8b93a1', fontSize: 11, attributionLogo: false },
+      layout: {
+        background: { color: 'transparent' },
+        textColor: '#8b93a1',
+        fontSize: 11,
+        attributionLogo: false,
+        panes: { separatorColor: '#262b35' },
+      },
       grid: { vertLines: { color: '#1c2028' }, horzLines: { color: '#1c2028' } },
       rightPriceScale: { borderColor: '#262b35' },
-      timeScale: { borderColor: '#262b35', timeVisible: interval !== '1d', secondsVisible: false },
+      timeScale: { borderColor: '#262b35', timeVisible: !['1d', '1w'].includes(interval), secondsVisible: false },
       localization: { priceFormatter: (p: number) => won(p) },
     });
     const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -64,67 +225,59 @@ export function ChartPanel() {
       wickDownColor: DOWN,
       priceFormat: { type: 'price', precision: 0, minMove: 1 },
     });
-    const maSeries: Array<ISeriesApi<'Line'>> = showMa
-      ? MA.map((m) =>
-          chart.addSeries(LineSeries, {
-            color: m.color,
-            lineWidth: 1,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            crosshairMarkerVisible: false,
-          }),
-        )
-      : [];
-    const volumeSeries = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' } }, 1);
-    chart.panes()[1]?.setHeight(70);
-
-    const volBar = (c: Candle) => ({
-      time: t(c),
-      value: c.volume,
-      color: c.close >= c.open ? 'rgba(240,68,82,.5)' : 'rgba(49,130,246,.5)',
-    });
-
-    let candles: Candle[] = [];
-    let lastVolume: number | undefined;
-    let unsubscribe = () => {};
-    let disposed = false;
-
-    void fetchCandles(selected, interval).then((data) => {
-      if (disposed) return;
-      candles = data;
-      candleSeries.setData(candles.map((c) => ({ ...c, time: t(c) })));
-      volumeSeries.setData(candles.map(volBar));
-      maSeries.forEach((s, mi) =>
-        s.setData(
-          candles.flatMap((c, i) => {
-            const v = smaAt(candles, i, MA[mi].n);
-            return v === undefined ? [] : [{ time: t(c), value: v }];
-          }),
-        ),
+    const legend: Array<[string, string]> = [];
+    const feeds = buildSeries(chart, indicators, legend);
+    const markers = createSeriesMarkers(candleSeries, []);
+    if (legendEl.current) {
+      legendEl.current.replaceChildren(
+        ...legend.map(([label, color]) => {
+          const span = document.createElement('span');
+          span.textContent = label;
+          span.style.color = color;
+          return span;
+        }),
       );
+    }
 
-      // 이후 들어오는 체결을 마지막 봉에 반영한다.
-      unsubscribe = useStore.subscribe((state) => {
-        const q = state.quotes[selected];
-        if (!q || q.volume === lastVolume) return;
-        const delta = lastVolume === undefined ? 0 : Math.max(0, q.volume - lastVolume);
-        lastVolume = q.volume;
-        const last = applyTick(candles, interval, q.price, delta, Math.floor(q.ts / 1000));
-        candleSeries.update({ ...last, time: t(last) });
-        volumeSeries.update(volBar(last));
-        maSeries.forEach((s, mi) => {
-          const v = smaAt(candles, candles.length - 1, MA[mi].n);
-          if (v !== undefined) s.update({ time: t(last), value: v });
-        });
-      });
+    let shown: Candle[] | undefined;
+    const render = () => {
+      const { candles } = useStore.getState();
+      candleSeries.setData(candles.map((c) => ({ ...c, time: t(c) })));
+      for (const feed of feeds) feed(candles);
+      const active = STRATEGIES.find((s) => s.id === useStore.getState().strategyId);
+      markers.setMarkers(
+        active
+          ? replay(active, candles).signals.map(
+              (s): SeriesMarker<Time> => ({
+                time: (s.time + KST_OFFSET_SEC) as UTCTimestamp,
+                position: s.type === 'entry' ? 'belowBar' : 'aboveBar',
+                shape: s.type === 'entry' ? 'arrowUp' : 'arrowDown',
+                color: s.type === 'entry' ? '#2bb673' : '#ff5c7a',
+                text: s.type === 'entry' ? '매수' : '매도',
+              }),
+            )
+          : [],
+      );
+      // 새로 불러온 봉이면 최근 구간으로 화면을 맞춘다.
+      if (candles !== shown && candles.length) {
+        shown = candles;
+        chart.timeScale().setVisibleLogicalRange({ from: candles.length - 140, to: candles.length + 4 });
+      }
+    };
+    render();
+    let rev = useStore.getState().candleRev;
+    const unsubscribe = useStore.subscribe((s) => {
+      if (s.candleRev !== rev) {
+        rev = s.candleRev;
+        render();
+      }
     });
 
     return () => {
-      disposed = true;
       unsubscribe();
       chart.remove();
     };
-  }, [selected, interval, showMa]);
+  }, [selected, interval, indicators, strategyId]);
 
   return (
     <section className="panel chart-panel">
@@ -157,22 +310,28 @@ export function ChartPanel() {
       </div>
       <div className="toolbar">
         {INTERVALS.map(([key, label]) => (
-          <button key={key} className={`chip ${interval === key ? 'on' : ''}`} onClick={() => setIntervalKey(key)}>
+          <button key={key} className={`chip ${interval === key ? 'on' : ''}`} onClick={() => setChartInterval(key)}>
             {label}
           </button>
         ))}
         <span className="spacer" />
-        <button className={`chip ${showMa ? 'on' : ''}`} onClick={() => setShowMa(!showMa)}>
-          이평선
+        <button className="chip" onClick={() => openModal('indicators')}>
+          지표
         </button>
-        {showMa &&
-          MA.map((m) => (
-            <span key={m.n} className="legend" style={{ color: m.color }}>
-              {m.n}
-            </span>
-          ))}
+        <button className="chip" onClick={() => openModal('cost')}>
+          원가 분포
+        </button>
+        <button className="chip" onClick={() => openModal('forecast')}>
+          경로 추정
+        </button>
       </div>
-      <div className="chart" ref={el} />
+      <div className="chart-wrap">
+        <div className="chart-legend">
+          <div ref={legendEl} className="legend-items" />
+          {strategy && <div className="legend-strategy">▲▼ {strategy.name} · 모의 화살표</div>}
+        </div>
+        <div className="chart" ref={el} style={{ height: 320 + subPanes * SUB_HEIGHT }} />
+      </div>
     </section>
   );
 }

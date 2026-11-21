@@ -15,7 +15,7 @@ class FakeMarket implements MarketProvider {
   }
   quote(): Quote {
     const p = this.price;
-    return { symbol: 'A', price: p, prevClose: p, change: 0, changeRate: 0, open: p, high: p, low: p, volume: 0, ts: 0 };
+    return { symbol: 'A', price: p, prevClose: p, change: 0, changeRate: 0, open: p, high: p, low: p, volume: 0, value: 0, ts: 0 };
   }
   async getQuotes() {
     return [this.quote()];

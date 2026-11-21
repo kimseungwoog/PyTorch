@@ -9,7 +9,7 @@ export function OrderTicket() {
   const stock = useStore((s) => s.stocks.find((x) => x.symbol === s.selected));
   const marketPrice = useStore((s) => s.quotes[s.selected]?.price);
   const holding = useStore((s) => s.holdings.find((h) => h.symbol === s.selected));
-  const ticketPrice = useStore((s) => s.ticketPrice);
+  const ticketFill = useStore((s) => s.ticketFill);
 
   const [side, setSide] = useState<Side>('buy');
   const [type, setType] = useState<OrderType>('limit');
@@ -24,13 +24,16 @@ export function OrderTicket() {
     setQty(0);
   }, [selected]);
 
-  // 호가창에서 가격을 고르면 지정가로 입력한다.
+  // 호가창이나 비중 계산기에서 넘어온 값을 지정가로 입력한다.
   useEffect(() => {
-    if (ticketPrice) {
-      setType('limit');
-      setPrice(ticketPrice);
+    if (!ticketFill) return;
+    setType('limit');
+    setPrice(ticketFill.price);
+    if (ticketFill.qty !== undefined) {
+      setSide('buy');
+      setQty(ticketFill.qty);
     }
-  }, [ticketPrice]);
+  }, [ticketFill]);
 
   if (!stock || !marketPrice || !status || !account) return <section className="panel ticket" />;
 

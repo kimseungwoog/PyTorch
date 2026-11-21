@@ -20,10 +20,11 @@ export interface Quote {
   high: number;
   low: number;
   volume: number; // 당일 누적 거래량
+  value: number; // 당일 누적 거래대금
   ts: number; // epoch ms
 }
 
-export type Interval = '1m' | '5m' | '15m' | '1h' | '1d';
+export type Interval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d' | '1w';
 
 export interface Candle {
   time: number; // 봉 시작 시각, epoch seconds
@@ -100,6 +101,21 @@ export interface ServerStatus {
   feeRate: number;
   sellTaxRate: number;
   maxOrderAmount: number;
+}
+
+// 스크리너 한 줄: 종목별 기술 평가와 매매 후보
+export interface ScreenerRow {
+  symbol: string;
+  name: string;
+  price: number;
+  changeRate: number;
+  gapRate: number; // 시가가 전일 종가에서 벌어진 비율
+  volumeMultiple: number | null; // 직전 확정 봉 거래량 / 그 앞 20봉 평균
+  value: number;
+  score: number; // -1 ~ +1
+  rating: string;
+  candidate: 'buy' | 'sell' | 'watch';
+  reason: string;
 }
 
 // 서버 → 클라이언트 WebSocket 메시지

@@ -26,14 +26,20 @@ export const INTERVAL_SEC: Record<Interval, number> = {
   '5m': 300,
   '15m': 900,
   '1h': 3_600,
+  '4h': 14_400,
   '1d': 86_400,
+  '1w': 604_800,
 };
 
 export const KST_OFFSET_SEC = 9 * 3_600;
 
-// 해당 시각이 속한 봉의 시작 시각. 일봉은 한국 시간 자정 기준.
+// 해당 시각이 속한 봉의 시작 시각. 일봉은 한국 시간 자정, 주봉은 한국 시간 월요일 자정 기준.
 export function bucketStart(tsSec: number, interval: Interval): number {
   const s = INTERVAL_SEC[interval];
+  if (interval === '1w') {
+    const monday = 4 * 86_400 - KST_OFFSET_SEC; // 1970-01-05(월) 00:00 KST
+    return Math.floor((tsSec - monday) / s) * s + monday;
+  }
   if (interval === '1d') return Math.floor((tsSec + KST_OFFSET_SEC) / s) * s - KST_OFFSET_SEC;
   return Math.floor(tsSec / s) * s;
 }

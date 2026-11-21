@@ -4,7 +4,7 @@ import { useStore } from '../store';
 export function OrderbookPanel() {
   const book = useStore((s) => s.orderbook);
   const quote = useStore((s) => s.quotes[s.selected]);
-  const setTicketPrice = useStore((s) => s.setTicketPrice);
+  const fillTicket = useStore((s) => s.fillTicket);
 
   if (!book || !quote) {
     return (
@@ -18,7 +18,7 @@ export function OrderbookPanel() {
   const row = (side: 'ask' | 'bid', price: number, qty: number) => {
     const rate = (price - quote.prevClose) / quote.prevClose;
     return (
-      <li key={`${side}${price}`} className={`level ${side}`} onClick={() => setTicketPrice(price)}>
+      <li key={`${side}${price}`} className={`level ${side}`} onClick={() => fillTicket(price)}>
         <span className="bar" style={{ width: `${(qty / max) * 100}%` }} />
         <span className={`lp ${dir(rate)} ${price === quote.price ? 'current' : ''}`}>{won(price)}</span>
         <span className="lr sub">{pct(rate)}</span>

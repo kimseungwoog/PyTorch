@@ -18,7 +18,7 @@ const UNIVERSE: Array<Stock & { base: number }> = [
   { symbol: '012450', name: '한화에어로스페이스', base: 291_500 },
 ].map((s) => ({ ...s, market: 'KR' as const, currency: 'KRW' as const }));
 
-const SIGMA: Record<Interval, number> = { '1m': 0.0008, '5m': 0.0018, '15m': 0.003, '1h': 0.006, '1d': 0.018 };
+const SIGMA: Record<Interval, number> = { '1m': 0.0008, '5m': 0.0018, '15m': 0.003, '1h': 0.006, '4h': 0.011, '1d': 0.018, '1w': 0.04 };
 
 function mulberry32(seed: number) {
   return () => {
@@ -62,9 +62,13 @@ export class MockMarket implements MarketProvider {
         open,
         high: Math.max(open, price),
         low: Math.min(open, price),
-        volume: Math.floor(rnd() * 2_000_000) + 100_000,
+        volume: 0,
+        value: 0,
         ts: now,
       });
+      const q = this.quotes.get(s.symbol)!;
+      q.volume = Math.floor(rnd() * 2_000_000) + 100_000;
+      q.value = q.volume * open;
     }
   }
 
@@ -94,7 +98,7 @@ export class MockMarket implements MarketProvider {
     const key = `${symbol}:${interval}`;
     let series = this.candles.get(key);
     if (!series) {
-      series = this.genHistory(symbol, interval, 500, q.price);
+      series = this.genHistory(symbol, interval, 1_000, q.price);
       this.candles.set(key, series);
     }
     return series.slice(-count);
@@ -137,6 +141,7 @@ export class MockMarket implements MarketProvider {
       q.high = Math.max(q.high, price);
       q.low = Math.min(q.low, price);
       q.volume += vol;
+      q.value += vol * price;
       q.ts = now;
       for (const interval of Object.keys(INTERVAL_SEC) as Interval[]) {
         const series = this.candles.get(`${q.symbol}:${interval}`);

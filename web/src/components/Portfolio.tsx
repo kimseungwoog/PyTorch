@@ -3,7 +3,7 @@ import { useStore } from '../store';
 
 export function Portfolio() {
   const { account, holdings, quotes, select, setTab } = useStore();
-  if (!account) return <section className="panel portfolio" />;
+  if (!account) return <div className="portfolio" />;
 
   // 서버 값은 주문 시점 기준이라, 화면에서는 실시간 현재가로 다시 계산한다.
   const rows = holdings.map((h) => {
@@ -18,7 +18,7 @@ export function Portfolio() {
   const total = equity - account.initialCash;
 
   return (
-    <section className="panel portfolio">
+    <div className="portfolio">
       <div className="panel-title">내 자산</div>
       <div className="equity">
         <div className="big">{won(equity)}원</div>
@@ -64,7 +64,7 @@ export function Portfolio() {
         ))}
         {!rows.length && <li className="empty">보유 종목이 없습니다.</li>}
       </ul>
-    </section>
+    </div>
   );
 }
 
