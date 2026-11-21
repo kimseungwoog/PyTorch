@@ -1,0 +1,15 @@
+{
+  "name": "tradedeck",
+  "private": true,
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,green \"npm -w server run dev\" \"npm -w web run dev\"",
+    "build": "npm -w web run build",
+    "test": "npm -w server test",
+    "typecheck": "npm -w server run typecheck && npm -w web run typecheck",
+    "toss:probe": "npm -w server run toss:probe"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

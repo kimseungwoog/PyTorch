@@ -1,84 +1,34 @@
-# 모두를 위한 딥러닝 시즌2 : 모두가 만드는 모두를 위한 딥러닝
+# TradeDeck
 
-모두가 만드는 모두를 위한 딥러닝 시즌 2에 오신 여러분들 환영합니다. 
+토스증권 Open API 를 쓰는 개인용 트레이딩 앱. 지금은 웹 1단계로, 모의 시세와 모의투자로 동작한다. 실제 돈은 움직이지 않는다.
 
-## Getting Started
+설계와 앞으로의 단계는 [docs/DESIGN.md](docs/DESIGN.md) 에 있다.
 
-아래 링크에서 슬라이드와 영상을 통해 학습을 시작할 수 있습니다.
+## 실행
 
-* Slide: http://bit.ly/2VrZcWM
-* YouTube: http://bit.ly/2UVk3kn
-
-### Docker 사용자를 위한 안내
-
-동일한 실습 환경을 위해 docker 를 사용하실 분은  [docker_user_guide.md](docker_user_guide.md) 파일을 참고하세요! :)
-
-### Install Requirements
+Node 22 이상이 필요하다.
 
 ```bash
-pip install -r requirements.txt
+npm install
+npm run dev
 ```
 
-Install PyTorch from website: [https://pytorch.org/](https://pytorch.org/)
+브라우저에서 http://localhost:5173 을 연다. 휴대폰 화면은 브라우저 개발자 도구의 기기 모드로 볼 수 있다.
 
+| 명령 | 설명 |
+| --- | --- |
+| `npm run dev` | 서버(8787)와 웹(5173)을 함께 실행 |
+| `npm test` | 모의투자·호가 단위·봉 계산 테스트 |
+| `npm run typecheck` | 타입 검사 |
+| `npm run build` | 웹 빌드 |
+| `npm run toss:probe` | 토스증권 연결 점검 (조회만, 주문 없음) |
 
----
+모의투자 잔고는 `server/data/paper.json` 에 저장된다. 지우면 처음(1,000만 원)으로 돌아간다.
 
-## PyTorch
+## 토스증권 연결
 
-Deep Learning Zero to All - PyTorch
+1. 토스증권 WTS > 설정 > Open API 에서 키를 발급하고 내 IP 를 허용 목록에 등록한다.
+2. `.env.example` 을 `.env` 로 복사해 `TOSS_CLIENT_ID`, `TOSS_CLIENT_SECRET`, `TOSS_ACCOUNT` 를 채운다.
+3. `npm run toss:probe` 를 실행한다.
 
-모든 코드는 PyTorch 1.0.0 기준으로 작성하였습니다. 
-
-## Contributions/Comments
-
-언제나 여러분들의 참여를 환영합니다. Comments나 Pull requests를 남겨주세요
-
-We always welcome your comments and pull requests
-
-## 목차
-
-### PART 1: Machine Learning & PyTorch Basic 
-
-* Lab-01-1 Tensor Manipulation 1
-* Lab-01-2 Tensor Manipulation 2
-* Lab-02 Linear regression
-* Lab-03 Deeper Look at GD
-* Lab-04-1 Multivariable Linear regression
-* Lab-04-2 Loading Data
-* Lab-05 Logistic Regression
-* Lab-06 Softmax Classification
-* Lab-07-1 Tips
-* Lab-07-2 MNIST Introduction
-
-### PART 2: Neural Network
-
-* Lab-08-1 Perceptron
-* Lab-08-2 Multi Layer Perceptron
-* Lab-09-1 ReLU
-* Lab-09-2 Weight initialization
-* Lab-09-3 Dropout
-* Lab-09-4 Batch Normalization
-
-### PART 3: Convolutional Neural Network
-
-* Lab-10-0 Convolution Neural Networkintro
-* Lab-10-1 Convolution
-* Lab-10-2 mnist cnn
-* Lab-10-3 visdom
-* Lab-10-4-1 ImageFolder1
-* Lab-10-4-2 ImageFolder2
-* Lab-10-5 Advance CNN(VGG)
-* Lab-10-6-1 Advanced CNN(RESNET-1)
-* Lab-10-6-2 Advanced CNN(RESNET-2)
-* Lab-10-7 Next step of CNN
-
-### PART 4: Recurrent Neural Network
-
-* Lab-11-0 RNN intro
-* Lab-11-1 RNN basics
-* Lab-11-2 RNN hihello and charseq
-* Lab-11-3 Long sequence
-* Lab-11-4 RNN timeseries
-* Lab-11-5 RNN seq2seq
-* Lab-11-6 PackedSequence
+출력된 응답으로 시세·주문 어댑터를 완성한다. 자세한 순서는 설계 문서 5장에 있다.
