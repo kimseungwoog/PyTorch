@@ -1,13 +1,26 @@
 import { createServer } from 'node:http';
-import { fileURLToPath } from 'node:url';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { analyze, ratingLabel } from '../../shared/analysis';
-import type { ClientMessage, Interval, OrderRequest, ScreenerRow, ServerMessage, ServerStatus } from '../../shared/types';
 import { INTERVAL_SEC } from '../../shared/market';
+import { replay, STRATEGIES } from '../../shared/strategies';
+import type {
+  ClientMessage,
+  Interval,
+  NewAlertRule,
+  OrderRequest,
+  ScreenerRow,
+  ServerMessage,
+  ServerStatus,
+  StrategyMatrixRow,
+} from '../../shared/types';
+import { AlertEngine } from './alerts';
 import { PaperBroker } from './broker/paper';
 import { OrderError } from './broker/types';
+import { Feed } from './feed';
+import { dataFile } from './json';
 import { MockMarket } from './market/mock';
+import { Risk } from './risk';
 
 const env = process.env;
 const PORT = Number(env.PORT ?? 8787);
@@ -18,8 +31,8 @@ const sellTaxRate = Number(env.SELL_TAX_RATE ?? 0.0015);
 const maxOrderAmount = Number(env.MAX_ORDER_AMOUNT ?? 5_000_000);
 
 if ((env.MARKET_PROVIDER ?? 'mock') !== 'mock' || (env.BROKER ?? 'paper') !== 'paper') {
-  // 토스증권 어댑터는 실제 응답 스키마를 확인한 뒤 연결한다 (docs/DESIGN.md 5장).
-  console.error('토스증권 연동은 아직 연결 전입니다. 먼저 `npm run toss:probe` 로 응답을 확인해 주세요.');
+  // 증권사 어댑터는 실제 응답 스키마를 확인한 뒤 연결한다 (docs/DESIGN.md 5장).
+  console.error('증권사 연동은 아직 연결 전입니다. 먼저 `npm run toss:probe` 로 응답을 확인해 주세요.');
   process.exit(1);
 }
 
@@ -28,13 +41,25 @@ const broker = new PaperBroker(market, {
   initialCash: Number(env.PAPER_INITIAL_CASH ?? 10_000_000),
   feeRate,
   sellTaxRate,
-  file: fileURLToPath(new URL('../data/paper.json', import.meta.url)),
+  file: dataFile('paper.json'),
 });
+const risk = new Risk(broker, Number(env.DAILY_LOSS_LIMIT ?? 300_000), dataFile('risk.json'));
+const alerts = new AlertEngine(market, dataFile('alerts.json'));
+const feed = new Feed(env.X_BEARER_TOKEN || undefined, dataFile('feed.json'));
 await broker.init();
 await market.start();
+await risk.status();
+setInterval(() => void alerts.scan().catch(console.error), 10_000);
+feed.start();
 
 const app = express();
 app.use(express.json());
+
+const interval = (req: Request): Interval => {
+  const v = String(req.query.interval ?? '1d') as Interval;
+  if (!(v in INTERVAL_SEC)) throw new OrderError('지원하지 않는 봉 주기입니다.');
+  return v;
+};
 
 app.get('/api/status', (_req, res) => {
   const status: ServerStatus = {
@@ -48,27 +73,25 @@ app.get('/api/status', (_req, res) => {
   res.json(status);
 });
 
+// ---------- 시세 ----------
 app.get('/api/stocks', async (_req, res) => res.json(await market.listStocks()));
 app.get('/api/quotes', async (_req, res) => res.json(await market.getQuotes()));
-
+app.get('/api/orderbook/:symbol', async (req, res) => res.json(await market.getOrderbook(req.params.symbol)));
 app.get('/api/candles/:symbol', async (req, res) => {
-  const interval = String(req.query.interval ?? '1d') as Interval;
-  if (!(interval in INTERVAL_SEC)) throw new OrderError('지원하지 않는 봉 주기입니다.');
   const count = Math.min(Number(req.query.count ?? 300) || 300, 1_000);
-  res.json(await market.getCandles(req.params.symbol, interval, count));
+  res.json(await market.getCandles(req.params.symbol, interval(req), count));
 });
 
+// ---------- 분석 ----------
 // 스크리너: 전 종목의 기술 평가를 한 번에 계산한다.
 app.get('/api/screener', async (req, res) => {
-  const interval = String(req.query.interval ?? '1d') as Interval;
-  if (!(interval in INTERVAL_SEC)) throw new OrderError('지원하지 않는 봉 주기입니다.');
-  const stocks = await market.listStocks();
+  const iv = interval(req);
   const quotes = new Map((await market.getQuotes()).map((q) => [q.symbol, q]));
   const rows: ScreenerRow[] = [];
-  for (const s of stocks) {
+  for (const s of await market.listStocks()) {
     const q = quotes.get(s.symbol);
     if (!q) continue;
-    const candles = await market.getCandles(s.symbol, interval, 300);
+    const candles = await market.getCandles(s.symbol, iv, 300);
     const a = analyze(candles);
     // 거래량 배수는 진행 중인 마지막 봉을 빼고 확정 봉으로 계산한다.
     const done = candles.slice(0, -1);
@@ -91,10 +114,37 @@ app.get('/api/screener', async (req, res) => {
   res.json(rows);
 });
 
-app.get('/api/orderbook/:symbol', async (req, res) => res.json(await market.getOrderbook(req.params.symbol)));
+// 전략 비교: 모든 전략을 전 종목의 과거 봉에 돌린 결과.
+app.get('/api/strategy-matrix', async (req, res) => {
+  const iv = interval(req);
+  const rows: StrategyMatrixRow[] = [];
+  for (const s of await market.listStocks()) {
+    const candles = await market.getCandles(s.symbol, iv, 500);
+    rows.push({
+      symbol: s.symbol,
+      name: s.name,
+      cells: STRATEGIES.map((st) => {
+        const r = replay(st, candles);
+        return { strategyId: st.id, trades: r.trades, winRate: r.winRate, totalReturn: r.totalReturn, holding: r.holding };
+      }),
+    });
+  }
+  res.json(rows);
+});
+
+// ---------- 계좌·주문 ----------
 app.get('/api/account', async (_req, res) => res.json(await broker.getAccount()));
 app.get('/api/holdings', async (_req, res) => res.json(await broker.getHoldings()));
 app.get('/api/orders', async (_req, res) => res.json(await broker.listOrders()));
+app.get('/api/brackets', async (_req, res) => res.json(await broker.listBrackets()));
+app.delete('/api/brackets/:id', async (req, res) => res.json(await broker.cancelBracket(req.params.id)));
+app.get('/api/risk', async (_req, res) => res.json(await risk.status()));
+app.put('/api/risk', async (req, res) => {
+  risk.setLimit(Number((req.body as { limit?: number }).limit));
+  res.json(await risk.status());
+});
+
+const optional = (v: unknown) => (v === undefined || v === null || v === '' ? undefined : Number(v));
 
 app.post('/api/orders', async (req, res) => {
   const body = req.body as OrderRequest;
@@ -103,18 +153,56 @@ app.post('/api/orders', async (req, res) => {
     side: body.side,
     type: body.type,
     qty: Number(body.qty),
-    price: body.price === undefined ? undefined : Number(body.price),
+    price: optional(body.price),
+    stopPrice: optional(body.stopPrice),
+    takePrice: optional(body.takePrice),
+    memo: typeof body.memo === 'string' ? body.memo : undefined,
   };
-  // 주문 금액 상한. 어떤 브로커를 쓰든 서버에서 한 번 더 막는다.
+  // 아래 두 가지는 어떤 브로커를 쓰든 서버에서 막는다.
   const [quote] = await market.getQuotes([reqOrder.symbol]);
   const refPrice = reqOrder.type === 'limit' ? reqOrder.price : quote?.price;
   if (refPrice && reqOrder.qty * refPrice > maxOrderAmount) {
     throw new OrderError(`1회 주문 한도(${maxOrderAmount.toLocaleString('ko-KR')}원)를 넘었습니다.`);
   }
+  if (reqOrder.side === 'buy' && (await risk.status()).blocked) {
+    throw new OrderError('오늘 손실이 하루 한도에 닿아 매수를 막았습니다. 매도는 할 수 있습니다.');
+  }
   res.status(201).json(await broker.placeOrder(reqOrder));
 });
 
 app.delete('/api/orders/:id', async (req, res) => res.json(await broker.cancelOrder(req.params.id)));
+app.put('/api/orders/:id/memo', async (req, res) =>
+  res.json(await broker.setMemo(req.params.id, String((req.body as { memo?: string }).memo ?? ''))),
+);
+
+// ---------- 알림 ----------
+app.get('/api/alerts', (_req, res) => res.json({ rules: alerts.rules, events: alerts.events }));
+app.post('/api/alerts', async (req, res) => res.status(201).json(await alerts.add(req.body as NewAlertRule)));
+app.delete('/api/alerts/:id', (req, res) => {
+  alerts.remove(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------- 글 모아보기 ----------
+app.get('/api/feed', (_req, res) => res.json(feed.snapshot()));
+app.post('/api/feed/authors', (req, res) => {
+  const b = req.body as { source: 'x' | 'fmkorea'; handle: string; notify?: boolean };
+  feed.addAuthor(b.source, String(b.handle ?? ''), b.notify !== false);
+  void feed.poll().then(() => broadcast({ type: 'feed' }));
+  res.status(201).json(feed.snapshot());
+});
+app.delete('/api/feed/authors/:id', (req, res) => {
+  feed.removeAuthor(req.params.id);
+  res.json(feed.snapshot());
+});
+app.put('/api/feed/interval', (req, res) => {
+  feed.setInterval(Number((req.body as { min?: number }).min));
+  res.json(feed.snapshot());
+});
+app.post('/api/feed/poll', async (_req, res) => {
+  await feed.poll();
+  res.json(feed.snapshot());
+});
 
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof OrderError) {
@@ -125,12 +213,17 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: '서버 오류가 발생했습니다.' });
 });
 
+// ---------- 실시간 ----------
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 const subscriptions = new Map<WebSocket, string>(); // 소켓별 호가를 받는 종목
 
 function send(ws: WebSocket, msg: ServerMessage) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function broadcast(msg: ServerMessage) {
+  for (const ws of wss.clients) send(ws, msg);
 }
 
 wss.on('connection', (ws) => {
@@ -146,7 +239,7 @@ wss.on('connection', (ws) => {
 });
 
 market.onQuote(async (q) => {
-  for (const ws of wss.clients) send(ws, { type: 'quote', data: q });
+  broadcast({ type: 'quote', data: q });
   const watchers = [...subscriptions].filter(([, symbol]) => symbol === q.symbol);
   if (!watchers.length) return;
   const book = await market.getOrderbook(q.symbol);
@@ -154,7 +247,22 @@ market.onQuote(async (q) => {
 });
 
 broker.onOrder((o) => {
-  for (const ws of wss.clients) send(ws, { type: 'order', data: o });
+  broadcast({ type: 'order', data: o });
+  if (o.status === 'filled') {
+    const side = o.side === 'buy' ? '매수' : '매도';
+    alerts.push(
+      `${o.name} ${o.note ?? `${side} 체결`}`,
+      `${o.qty.toLocaleString('ko-KR')}주 · ${o.avgFillPrice.toLocaleString('ko-KR')}원`,
+      o.symbol,
+    );
+  }
+});
+
+alerts.onEvent((e) => broadcast({ type: 'alert', data: e }));
+
+feed.onNewPosts((posts, author) => {
+  alerts.push(`@${author.handle} 새 글 ${posts.length}개`, posts[0].text.slice(0, 120));
+  broadcast({ type: 'feed' });
 });
 
 server.listen(PORT, HOST, () => {

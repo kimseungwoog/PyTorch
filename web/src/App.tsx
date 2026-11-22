@@ -7,6 +7,7 @@ import { Orders, Portfolio } from './components/Portfolio';
 import { CostModal, ForecastModal } from './components/Research';
 import { StrategyBoard } from './components/StrategyBoard';
 import { TechPanel } from './components/TechPanel';
+import { AlertsModal, FeedModal, JournalModal, MatrixModal } from './components/Tools';
 import { Watchlist } from './components/Watchlist';
 import { useStore, type Side } from './store';
 
@@ -18,6 +19,8 @@ const SIDES: Array<[Side, string]> = [
 
 export function App() {
   const { init, status, tab, side, modal, setTab, setSide, openModal, connected, toasts } = useStore();
+  const alertCount = useStore((s) => s.alertRules.length);
+  const riskBlocked = useStore((s) => s.risk?.blocked);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -62,6 +65,19 @@ export function App() {
         <button className="chip" onClick={() => openModal('screener')}>
           스크리너
         </button>
+        <button className="chip" onClick={() => openModal('matrix')}>
+          전략 비교
+        </button>
+        <button className="chip" onClick={() => openModal('alerts')}>
+          알림{alertCount ? ` ${alertCount}` : ''}
+        </button>
+        <button className="chip" onClick={() => openModal('journal')}>
+          매매 일지
+        </button>
+        <button className="chip" onClick={() => openModal('feed')}>
+          글 모아보기
+        </button>
+        {riskBlocked && <span className="badge live">매수 차단 중</span>}
         <span className="spacer" />
         <span className={`dot ${connected ? 'on' : ''}`} title={connected ? '실시간 연결됨' : '연결 끊김'} />
         <span className="sub conn">{connected ? '실시간' : '재연결 중'}</span>
@@ -113,6 +129,10 @@ export function App() {
       {modal === 'indicators' && <IndicatorModal />}
       {modal === 'cost' && <CostModal />}
       {modal === 'forecast' && <ForecastModal />}
+      {modal === 'alerts' && <AlertsModal />}
+      {modal === 'journal' && <JournalModal />}
+      {modal === 'matrix' && <MatrixModal />}
+      {modal === 'feed' && <FeedModal />}
 
       <div className="toasts">
         {toasts.map((t) => (

@@ -8,6 +8,7 @@ export interface Stock {
   name: string;
   market: Market;
   currency: Currency;
+  sector?: string;
 }
 
 export interface Quote {
@@ -57,6 +58,9 @@ export interface OrderRequest {
   type: OrderType;
   qty: number;
   price?: number; // 지정가일 때 필수
+  stopPrice?: number; // 매수 체결 뒤 이 가격 이하로 내려가면 자동 매도 (손절)
+  takePrice?: number; // 매수 체결 뒤 이 가격 이상으로 오르면 자동 매도 (익절)
+  memo?: string; // 매매 이유 (매매 일지)
 }
 
 export interface Order extends OrderRequest {
@@ -65,6 +69,8 @@ export interface Order extends OrderRequest {
   filledQty: number;
   avgFillPrice: number;
   fee: number; // 수수료 + 세금
+  note?: string; // 자동 주문일 때 사유 (손절·익절)
+  realizedPnl?: number; // 매도 체결 시 실현 손익
   status: OrderStatus;
   createdAt: number;
   updatedAt: number;
@@ -103,6 +109,77 @@ export interface ServerStatus {
   maxOrderAmount: number;
 }
 
+// 매수에 묶어 둔 자동 매도 (손절·익절)
+export interface Bracket {
+  id: string;
+  parentId: string;
+  symbol: string;
+  name: string;
+  qty: number;
+  stopPrice?: number;
+  takePrice?: number;
+  status: 'waiting' | 'active' | 'done' | 'cancelled'; // waiting = 매수 체결 전
+  result?: 'stop' | 'take';
+  createdAt: number;
+}
+
+export interface RiskStatus {
+  limit: number; // 하루 손실 한도 (원). 0 이면 끔
+  dayPnl: number; // 오늘(한국 시간) 시작 대비 자산 변화
+  blocked: boolean; // 한도 도달로 매수 차단 중
+}
+
+export type AlertRule = { id: string; symbol: string; name: string; createdAt: number } & (
+  | { kind: 'price'; op: 'gte' | 'lte'; price: number }
+  | { kind: 'candidate' }
+  | { kind: 'strategy'; strategyId: string }
+);
+export type NewAlertRule =
+  | { symbol: string; kind: 'price'; price: number }
+  | { symbol: string; kind: 'candidate' }
+  | { symbol: string; kind: 'strategy'; strategyId: string };
+
+export interface AlertEvent {
+  id: string;
+  ts: number;
+  title: string;
+  body: string;
+  symbol?: string;
+}
+
+export interface StrategyMatrixRow {
+  symbol: string;
+  name: string;
+  cells: Array<{ strategyId: string; trades: number; winRate: number; totalReturn: number; holding: boolean }>;
+}
+
+// 글 모아보기
+export type FeedSource = 'x' | 'fmkorea';
+export interface FeedAuthor {
+  id: string;
+  source: FeedSource;
+  handle: string; // X 아이디 또는 에펨코리아 닉네임
+  notify: boolean; // 새 글 알림
+  userId?: string;
+  lastId?: string;
+  error?: string;
+}
+export interface FeedPost {
+  id: string;
+  authorId: string;
+  handle: string;
+  text: string;
+  url: string;
+  ts: number;
+}
+export interface FeedState {
+  authors: FeedAuthor[];
+  posts: FeedPost[];
+  intervalMin: number;
+  xEnabled: boolean; // 서버에 X API 토큰이 설정됐는지
+  lastPollAt?: number;
+}
+
 // 스크리너 한 줄: 종목별 기술 평가와 매매 후보
 export interface ScreenerRow {
   symbol: string;
@@ -122,7 +199,9 @@ export interface ScreenerRow {
 export type ServerMessage =
   | { type: 'quote'; data: Quote }
   | { type: 'orderbook'; data: Orderbook }
-  | { type: 'order'; data: Order };
+  | { type: 'order'; data: Order }
+  | { type: 'alert'; data: AlertEvent }
+  | { type: 'feed' };
 
 // 클라이언트 → 서버 WebSocket 메시지
 export type ClientMessage = { type: 'subscribe'; symbol: string };

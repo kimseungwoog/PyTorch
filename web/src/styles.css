@@ -1105,3 +1105,144 @@ select {
     grid-template-columns: minmax(260px, 1fr) 1.4fr;
   }
 }
+
+/* ---------- 3단계: 알림·자동 매도·일지·글 모아보기 ---------- */
+a.chip {
+  text-decoration: none;
+}
+.right-chip {
+  float: right;
+  margin-left: 6px;
+}
+.panel-title.small.first {
+  margin-top: 0;
+}
+.row.static {
+  cursor: default;
+}
+.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.bracket {
+  margin-bottom: 10px;
+}
+.bracket-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 6px;
+}
+.bracket-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+.bracket-grid input,
+.risk-box input {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  text-align: right;
+}
+.search.memo {
+  width: 100%;
+  margin: 6px 0 12px;
+}
+.memo-line {
+  font-style: italic;
+}
+.risk-box {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.risk-box.blocked {
+  border-color: var(--up);
+}
+.risk-box .inline input {
+  width: 110px;
+}
+.pulse {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.pulse-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  white-space: nowrap;
+}
+.pulse-sectors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 4px;
+}
+.sector {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.draw-hint {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--warn);
+  font-size: 12px;
+}
+.chart.drawing {
+  cursor: crosshair;
+}
+.stat-cards.four {
+  grid-template-columns: repeat(2, 1fr);
+}
+.journal-row .search.memo {
+  margin: 6px 0 0;
+}
+.data-table.matrix .cell {
+  cursor: pointer;
+}
+.data-table.matrix .cell:hover {
+  background: var(--panel-2);
+}
+.notice {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  font-size: 13px;
+}
+.notice p + p {
+  margin-top: 6px;
+}
+.post {
+  align-items: flex-start;
+}
+@media (min-width: 760px) {
+  .stat-cards.four {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}

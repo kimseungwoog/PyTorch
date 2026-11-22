@@ -3,20 +3,22 @@ import type { Candle, Interval, Orderbook, Quote, Stock } from '../../../shared/
 import type { MarketProvider } from './types';
 
 // 모의 시세. 종목명은 실제 종목이지만 가격은 전부 난수로 만든 가짜다.
-const UNIVERSE: Array<Stock & { base: number }> = [
-  { symbol: '005930', name: '삼성전자', base: 71_000 },
-  { symbol: '000660', name: 'SK하이닉스', base: 182_000 },
-  { symbol: '373220', name: 'LG에너지솔루션', base: 398_000 },
-  { symbol: '207940', name: '삼성바이오로직스', base: 812_000 },
-  { symbol: '005380', name: '현대차', base: 243_000 },
-  { symbol: '000270', name: '기아', base: 104_500 },
-  { symbol: '035420', name: 'NAVER', base: 196_000 },
-  { symbol: '035720', name: '카카오', base: 41_250 },
-  { symbol: '068270', name: '셀트리온', base: 178_300 },
-  { symbol: '105560', name: 'KB금융', base: 86_400 },
-  { symbol: '005490', name: 'POSCO홀딩스', base: 352_000 },
-  { symbol: '012450', name: '한화에어로스페이스', base: 291_500 },
-].map((s) => ({ ...s, market: 'KR' as const, currency: 'KRW' as const }));
+const UNIVERSE: Array<Stock & { base: number }> = (
+  [
+  { symbol: '005930', name: '삼성전자', sector: '반도체', base: 71_000 },
+  { symbol: '000660', name: 'SK하이닉스', sector: '반도체', base: 182_000 },
+  { symbol: '373220', name: 'LG에너지솔루션', sector: '2차전지', base: 398_000 },
+  { symbol: '207940', name: '삼성바이오로직스', sector: '바이오', base: 812_000 },
+  { symbol: '005380', name: '현대차', sector: '자동차', base: 243_000 },
+  { symbol: '000270', name: '기아', sector: '자동차', base: 104_500 },
+  { symbol: '035420', name: 'NAVER', sector: '인터넷', base: 196_000 },
+  { symbol: '035720', name: '카카오', sector: '인터넷', base: 41_250 },
+  { symbol: '068270', name: '셀트리온', sector: '바이오', base: 178_300 },
+  { symbol: '105560', name: 'KB금융', sector: '금융', base: 86_400 },
+  { symbol: '005490', name: 'POSCO홀딩스', sector: '철강·소재', base: 352_000 },
+  { symbol: '012450', name: '한화에어로스페이스', sector: '방산', base: 291_500 },
+  ] as Array<{ symbol: string; name: string; sector: string; base: number }>
+).map((s) => ({ ...s, market: 'KR' as const, currency: 'KRW' as const }));
 
 const SIGMA: Record<Interval, number> = { '1m': 0.0008, '5m': 0.0018, '15m': 0.003, '1h': 0.006, '4h': 0.011, '1d': 0.018, '1w': 0.04 };
 

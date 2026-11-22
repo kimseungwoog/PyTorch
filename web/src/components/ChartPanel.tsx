@@ -5,6 +5,7 @@ import {
   HistogramSeries,
   LineSeries,
   LineStyle,
+  type IPriceLine,
   type ISeriesApi,
   type SeriesMarker,
   type Time,
@@ -25,7 +26,7 @@ import {
   vwap,
   type Num,
 } from '../../../shared/indicators';
-import { KST_OFFSET_SEC } from '../../../shared/market';
+import { bucketStart, KST_OFFSET_SEC, roundToTick } from '../../../shared/market';
 import { replay, STRATEGIES } from '../../../shared/strategies';
 import type { Candle, Interval } from '../../../shared/types';
 import { dir, pct, signed, won } from '../format';
@@ -193,7 +194,9 @@ export function ChartPanel() {
   const interval = useStore((s) => s.interval);
   const indicators = useStore((s) => s.indicators);
   const strategyId = useStore((s) => s.strategyId);
-  const { setChartInterval, openModal } = useStore();
+  const drawMode = useStore((s) => s.drawMode);
+  const hasDrawings = useStore((s) => (s.drawings[s.selected] ?? []).length > 0);
+  const { setChartInterval, openModal, setDrawMode, clearDrawings } = useStore();
   const el = useRef<HTMLDivElement>(null);
   const legendEl = useRef<HTMLDivElement>(null);
 
@@ -265,12 +268,82 @@ export function ChartPanel() {
       }
     };
     render();
-    let rev = useStore.getState().candleRev;
-    const unsubscribe = useStore.subscribe((s) => {
-      if (s.candleRev !== rev) {
-        rev = s.candleRev;
-        render();
+
+    // 내 평단가, 미체결 주문, 자동 매도 가격, 직접 그린 선을 차트에 올린다.
+    let priceLines: IPriceLine[] = [];
+    let trendSeries: Array<ISeriesApi<'Line'>> = [];
+    const syncLines = () => {
+      const s = useStore.getState();
+      priceLines.forEach((l) => candleSeries.removePriceLine(l));
+      trendSeries.forEach((x) => chart.removeSeries(x));
+      priceLines = [];
+      trendSeries = [];
+      const add = (price: number, color: string, title: string, style = LineStyle.Dashed) =>
+        priceLines.push(candleSeries.createPriceLine({ price, color, title, lineWidth: 1, lineStyle: style, axisLabelVisible: true }));
+      const holding = s.holdings.find((h) => h.symbol === selected);
+      if (holding) add(holding.avgPrice, '#ffd166', `평단 ${holding.qty}주`, LineStyle.Solid);
+      for (const o of s.orders) {
+        if (o.status === 'open' && o.symbol === selected) add(o.price!, o.side === 'buy' ? UP : DOWN, `${o.side === 'buy' ? '매수' : '매도'} ${o.qty}주`);
       }
+      for (const b of s.brackets) {
+        if (b.symbol !== selected) continue;
+        if (b.stopPrice) add(b.stopPrice, DOWN, '손절', LineStyle.Dotted);
+        if (b.takePrice) add(b.takePrice, UP, '익절', LineStyle.Dotted);
+      }
+      for (const d of s.drawings[selected] ?? []) {
+        if (d.type === 'h') {
+          add(d.price, '#e0e0e0', '', LineStyle.Solid);
+          continue;
+        }
+        // 다른 주기에서 그린 선도 보이도록 현재 주기의 봉 시작 시각에 맞춘다.
+        const a = bucketStart(d.t1, interval);
+        const b = bucketStart(d.t2, interval);
+        if (a === b) continue;
+        const points = a < b ? [[a, d.p1], [b, d.p2]] : [[b, d.p2], [a, d.p1]];
+        const ls = chart.addSeries(LineSeries, {
+          color: '#e0e0e0',
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => null,
+        });
+        ls.setData(points.map(([time, value]) => ({ time: (time + KST_OFFSET_SEC) as UTCTimestamp, value })));
+        trendSeries.push(ls);
+      }
+    };
+    syncLines();
+
+    // 그리기: 수평선은 한 번, 추세선은 두 번 누른다.
+    let pending: { t: number; p: number } | null = null;
+    chart.subscribeClick((param) => {
+      const s = useStore.getState();
+      if (!s.drawMode || !param.point || (param.paneIndex ?? 0) !== 0) return;
+      const price = candleSeries.coordinateToPrice(param.point.y);
+      if (price === null) return;
+      if (s.drawMode === 'h') {
+        s.addDrawing({ type: 'h', price: roundToTick(price) });
+        return;
+      }
+      if (param.time === undefined) return;
+      const time = (param.time as number) - KST_OFFSET_SEC;
+      if (!pending) {
+        pending = { t: time, p: price };
+        s.toast('추세선의 끝점을 눌러 주세요.');
+      } else {
+        s.addDrawing({ type: 't', t1: pending.t, p1: pending.p, t2: time, p2: price });
+        pending = null;
+      }
+    });
+
+    let prev = useStore.getState();
+    const unsubscribe = useStore.subscribe((s) => {
+      if (s.candleRev !== prev.candleRev) render();
+      if (s.holdings !== prev.holdings || s.orders !== prev.orders || s.brackets !== prev.brackets || s.drawings !== prev.drawings) {
+        syncLines();
+      }
+      if (!s.drawMode) pending = null;
+      prev = s;
     });
 
     return () => {
@@ -315,6 +388,17 @@ export function ChartPanel() {
           </button>
         ))}
         <span className="spacer" />
+        <button className={`chip ${drawMode === 'h' ? 'on' : ''}`} onClick={() => setDrawMode(drawMode === 'h' ? null : 'h')}>
+          수평선
+        </button>
+        <button className={`chip ${drawMode === 't' ? 'on' : ''}`} onClick={() => setDrawMode(drawMode === 't' ? null : 't')}>
+          추세선
+        </button>
+        {hasDrawings && (
+          <button className="chip" onClick={clearDrawings}>
+            선 지우기
+          </button>
+        )}
         <button className="chip" onClick={() => openModal('indicators')}>
           지표
         </button>
@@ -330,7 +414,8 @@ export function ChartPanel() {
           <div ref={legendEl} className="legend-items" />
           {strategy && <div className="legend-strategy">▲▼ {strategy.name} · 모의 화살표</div>}
         </div>
-        <div className="chart" ref={el} style={{ height: 320 + subPanes * SUB_HEIGHT }} />
+        {drawMode && <div className="draw-hint">{drawMode === 'h' ? '차트에서 가격을 누르면 수평선이 그려집니다.' : '차트에서 시작점과 끝점을 차례로 누르세요.'}</div>}
+        <div className={`chart ${drawMode ? 'drawing' : ''}`} ref={el} style={{ height: 320 + subPanes * SUB_HEIGHT }} />
       </div>
     </section>
   );

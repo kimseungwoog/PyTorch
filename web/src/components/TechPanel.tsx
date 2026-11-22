@@ -110,11 +110,11 @@ function SizeCalculator({ entry0, stop0 }: { entry0: number; stop0: number }) {
         className="chip on wide"
         disabled={!valid || capped <= 0}
         onClick={() => {
-          fillTicket(roundToTick(entry), capped);
+          fillTicket(roundToTick(entry), capped, roundToTick(stop), roundToTick(entry + 2 * perShare));
           setTab('trade');
         }}
       >
-        주문창에 넣기
+        손절·목표와 함께 주문창에 넣기
       </button>
     </div>
   );

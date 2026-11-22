@@ -5,7 +5,7 @@ import { won } from '../format';
 import { useStore } from '../store';
 
 export function OrderTicket() {
-  const { selected, status, account, placeOrder } = useStore();
+  const { selected, status, account, risk, placeOrder } = useStore();
   const stock = useStore((s) => s.stocks.find((x) => x.symbol === s.selected));
   const marketPrice = useStore((s) => s.quotes[s.selected]?.price);
   const holding = useStore((s) => s.holdings.find((h) => h.symbol === s.selected));
@@ -15,6 +15,10 @@ export function OrderTicket() {
   const [type, setType] = useState<OrderType>('limit');
   const [price, setPrice] = useState(0);
   const [qty, setQty] = useState(0);
+  const [bracket, setBracket] = useState(false);
+  const [stop, setStop] = useState(0);
+  const [take, setTake] = useState(0);
+  const [memo, setMemo] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [sending, setSending] = useState(false);
 
@@ -22,6 +26,9 @@ export function OrderTicket() {
   useEffect(() => {
     setPrice(useStore.getState().quotes[selected]?.price ?? 0);
     setQty(0);
+    setBracket(false);
+    setStop(0);
+    setTake(0);
   }, [selected]);
 
   // 호가창이나 비중 계산기에서 넘어온 값을 지정가로 입력한다.
@@ -32,6 +39,11 @@ export function OrderTicket() {
     if (ticketFill.qty !== undefined) {
       setSide('buy');
       setQty(ticketFill.qty);
+    }
+    if (ticketFill.stop || ticketFill.take) {
+      setBracket(true);
+      setStop(ticketFill.stop ?? 0);
+      setTake(ticketFill.take ?? 0);
     }
   }, [ticketFill]);
 
@@ -50,6 +62,12 @@ export function OrderTicket() {
   if (type === 'limit' && !isOnTick(price)) problem = `호가 단위(${won(tickSize(price))}원)에 맞지 않습니다.`;
   else if (qty > maxQty) problem = side === 'buy' ? '주문 가능 금액을 넘었습니다.' : '매도 가능 수량을 넘었습니다.';
   else if (amount > status.maxOrderAmount) problem = `1회 주문 한도 ${won(status.maxOrderAmount)}원을 넘었습니다.`;
+  const useBracket = side === 'buy' && bracket && (stop > 0 || take > 0);
+  if (!problem && useBracket) {
+    if (stop > 0 && stop >= refPrice) problem = '손절가는 매수가보다 낮아야 합니다.';
+    else if (take > 0 && take <= refPrice) problem = '익절가는 매수가보다 높아야 합니다.';
+  }
+  if (!problem && side === 'buy' && risk?.blocked) problem = '오늘 손실이 하루 한도에 닿아 매수가 막혀 있습니다.';
   const canSubmit = qty > 0 && !problem;
 
   const step = (d: 1 | -1) =>
@@ -57,10 +75,22 @@ export function OrderTicket() {
 
   const submit = async () => {
     setSending(true);
-    const ok = await placeOrder({ symbol: selected, side, type, qty, price: type === 'limit' ? price : undefined });
+    const ok = await placeOrder({
+      symbol: selected,
+      side,
+      type,
+      qty,
+      price: type === 'limit' ? price : undefined,
+      stopPrice: useBracket && stop > 0 ? stop : undefined,
+      takePrice: useBracket && take > 0 ? take : undefined,
+      memo: memo.trim() || undefined,
+    });
     setSending(false);
     setConfirming(false);
-    if (ok) setQty(0);
+    if (ok) {
+      setQty(0);
+      setMemo('');
+    }
   };
 
   const sideLabel = side === 'buy' ? '매수' : '매도';
@@ -126,6 +156,27 @@ export function OrderTicket() {
         ))}
       </div>
 
+      {side === 'buy' && (
+        <div className="bracket">
+          <label className="check">
+            <input type="checkbox" checked={bracket} onChange={(e) => setBracket(e.target.checked)} />
+            손절·익절 함께 걸기
+          </label>
+          {bracket && (
+            <div className="bracket-grid">
+              <label>
+                <span>손절가</span>
+                <input inputMode="numeric" placeholder="없음" value={stop || ''} onChange={(e) => setStop(Number(e.target.value) || 0)} />
+              </label>
+              <label>
+                <span>익절가</span>
+                <input inputMode="numeric" placeholder="없음" value={take || ''} onChange={(e) => setTake(Number(e.target.value) || 0)} />
+              </label>
+            </div>
+          )}
+        </div>
+      )}
+
       <dl className="summary">
         <dt>{side === 'buy' ? '주문 가능' : '매도 가능'}</dt>
         <dd>{side === 'buy' ? `${won(account.buyingPower)}원` : `${won(holding?.sellableQty ?? 0)}주`}</dd>
@@ -153,7 +204,16 @@ export function OrderTicket() {
               <dd>{won(qty)}주</dd>
               <dt>예상 금액</dt>
               <dd>{won(amount)}원</dd>
+              {useBracket && (
+                <>
+                  <dt>자동 매도</dt>
+                  <dd>
+                    {stop > 0 ? `손절 ${won(stop)}` : ''} {take > 0 ? `익절 ${won(take)}` : ''}
+                  </dd>
+                </>
+              )}
             </dl>
+            <input className="search memo" placeholder="매매 이유 (선택, 매매 일지에 남습니다)" value={memo} onChange={(e) => setMemo(e.target.value)} />
             <p className={`mode ${status.live ? 'live' : ''}`}>
               {status.live ? '실계좌 주문입니다. 실제 돈이 움직입니다.' : '모의투자 주문입니다. 실제 돈은 움직이지 않습니다.'}
             </p>

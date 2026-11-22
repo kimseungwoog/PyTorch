@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { applyTick } from '../../shared/market';
 import type {
   Account,
+  AlertEvent,
+  AlertRule,
+  Bracket,
   Candle,
   ClientMessage,
   Holding,
@@ -10,6 +13,7 @@ import type {
   OrderRequest,
   Orderbook,
   Quote,
+  RiskStatus,
   ServerMessage,
   ServerStatus,
   Stock,
@@ -17,7 +21,21 @@ import type {
 
 export type Tab = 'watch' | 'trade' | 'side' | 'orders';
 export type Side = 'tech' | 'strategy' | 'asset';
-export type ModalKind = 'rank' | 'screener' | 'cost' | 'forecast' | 'indicators' | null;
+export type ModalKind =
+  | 'rank'
+  | 'screener'
+  | 'cost'
+  | 'forecast'
+  | 'indicators'
+  | 'alerts'
+  | 'journal'
+  | 'matrix'
+  | 'feed'
+  | null;
+
+// 차트에 직접 그린 선. 종목별로 브라우저에 저장된다.
+export type Drawing = { type: 'h'; price: number } | { type: 't'; t1: number; p1: number; t2: number; p2: number };
+export type DrawMode = 'h' | 't' | null;
 
 // 차트에 올릴 지표 설정. 브라우저에 저장된다.
 export interface IndicatorConfig {
@@ -72,11 +90,18 @@ interface State {
   account?: Account;
   holdings: Holding[];
   orders: Order[];
+  brackets: Bracket[];
+  risk?: RiskStatus;
+  alertRules: AlertRule[];
+  alertEvents: AlertEvent[];
+  feedRev: number; // 새 글이 들어오면 오른다
+  drawings: Record<string, Drawing[]>;
+  drawMode: DrawMode;
   favorites: string[];
   tab: Tab;
   side: Side;
   modal: ModalKind;
-  ticketFill?: { price: number; qty?: number; seq: number }; // 호가창·계산기에서 주문창으로 넘기는 값
+  ticketFill?: { price: number; qty?: number; stop?: number; take?: number; seq: number }; // 호가창·계산기에서 주문창으로 넘기는 값
   connected: boolean;
   toasts: Toast[];
   init(): Promise<void>;
@@ -87,7 +112,12 @@ interface State {
   setTab(tab: Tab): void;
   setSide(side: Side): void;
   openModal(modal: ModalKind): void;
-  fillTicket(price: number, qty?: number): void;
+  fillTicket(price: number, qty?: number, stop?: number, take?: number): void;
+  setDrawMode(mode: DrawMode): void;
+  addDrawing(d: Drawing): void;
+  clearDrawings(): void;
+  refreshAlerts(): Promise<void>;
+  cancelBracket(id: string): Promise<void>;
   toggleFavorite(symbol: string): void;
   refreshAccount(): Promise<void>;
   placeOrder(req: OrderRequest): Promise<boolean>;
@@ -101,6 +131,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) throw new Error((json as { error?: string }).error ?? `요청 실패 (${res.status})`);
   return json as T;
 }
+
+export const sendJson = <T>(method: string, path: string, body?: unknown) =>
+  api<T>(path, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
 
 export const fetchCandles = (symbol: string, interval: Interval, count = 500) =>
   api<Candle[]>(`/api/candles/${symbol}?interval=${interval}&count=${count}`);
@@ -165,6 +198,17 @@ export const useStore = create<State>((set, get) => {
           get().toast(`${o.name} ${o.qty}주 ${o.side === 'buy' ? '매수' : '매도'} 체결`);
         }
         void get().refreshAccount();
+      } else if (msg.type === 'alert') {
+        const e = msg.data;
+        set((s) => ({ alertEvents: [e, ...s.alertEvents].slice(0, 100) }));
+        // 체결 알림은 위에서 이미 띄웠다.
+        if (!e.title.includes('체결')) get().toast(e.title);
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          new Notification(e.title, { body: e.body });
+        }
+        void get().refreshAlerts();
+      } else if (msg.type === 'feed') {
+        set((s) => ({ feedRev: s.feedRev + 1 }));
       }
     };
   }
@@ -194,6 +238,12 @@ export const useStore = create<State>((set, get) => {
     strategyId: null,
     holdings: [],
     orders: [],
+    brackets: [],
+    alertRules: [],
+    alertEvents: [],
+    feedRev: 0,
+    drawings: loadJson<Record<string, Drawing[]>>('drawings', {}),
+    drawMode: null,
     favorites: loadJson<string[]>('favorites', []),
     tab: 'watch',
     side: 'tech',
@@ -213,13 +263,13 @@ export const useStore = create<State>((set, get) => {
         quotes: Object.fromEntries(quotes.map((q) => [q.symbol, q])),
         selected: stocks[0]?.symbol ?? '',
       });
-      await Promise.all([get().refreshAccount(), loadCandles()]);
+      await Promise.all([get().refreshAccount(), get().refreshAlerts(), loadCandles()]);
       connect();
     },
 
     select(symbol) {
       if (symbol === get().selected) return;
-      set({ selected: symbol, orderbook: undefined, ticketFill: undefined });
+      set({ selected: symbol, orderbook: undefined, ticketFill: undefined, drawMode: null });
       sendWs({ type: 'subscribe', symbol });
       void loadCandles();
     },
@@ -241,7 +291,37 @@ export const useStore = create<State>((set, get) => {
     setTab: (tab) => set({ tab }),
     setSide: (side) => set({ side }),
     openModal: (modal) => set({ modal }),
-    fillTicket: (price, qty) => set({ ticketFill: { price, qty, seq: ++fillSeq } }),
+    fillTicket: (price, qty, stop, take) => set({ ticketFill: { price, qty, stop, take, seq: ++fillSeq } }),
+    setDrawMode: (drawMode) => set({ drawMode }),
+
+    addDrawing(d) {
+      const { selected, drawings } = get();
+      const next = { ...drawings, [selected]: [...(drawings[selected] ?? []), d] };
+      saveJson('drawings', next);
+      set({ drawings: next, drawMode: null });
+    },
+
+    clearDrawings() {
+      const { selected, drawings } = get();
+      const next = { ...drawings, [selected]: [] };
+      saveJson('drawings', next);
+      set({ drawings: next, drawMode: null });
+    },
+
+    async refreshAlerts() {
+      const { rules, events } = await api<{ rules: AlertRule[]; events: AlertEvent[] }>('/api/alerts');
+      set({ alertRules: rules, alertEvents: events });
+    },
+
+    async cancelBracket(id) {
+      try {
+        await api(`/api/brackets/${id}`, { method: 'DELETE' });
+        get().toast('자동 매도를 취소했습니다.');
+        await get().refreshAccount();
+      } catch (e) {
+        get().toast((e as Error).message, 'error');
+      }
+    },
 
     toggleFavorite(symbol) {
       const cur = get().favorites;
@@ -251,12 +331,14 @@ export const useStore = create<State>((set, get) => {
     },
 
     async refreshAccount() {
-      const [account, holdings, orders] = await Promise.all([
+      const [account, holdings, orders, brackets, risk] = await Promise.all([
         api<Account>('/api/account'),
         api<Holding[]>('/api/holdings'),
         api<Order[]>('/api/orders'),
+        api<Bracket[]>('/api/brackets'),
+        api<RiskStatus>('/api/risk'),
       ]);
-      set({ account, holdings, orders });
+      set({ account, holdings, orders, brackets, risk });
     },
 
     async placeOrder(req) {
