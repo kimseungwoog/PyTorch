@@ -105,6 +105,11 @@ export function AlertsModal() {
               <div className="sub wrap">{e.body}</div>
             </div>
             <span className="sub">{stamp(e.ts)}</span>
+            {e.url && (
+              <a className="chip" href={e.url} target="_blank" rel="noreferrer noopener">
+                열기
+              </a>
+            )}
           </li>
         ))}
         {!alertEvents.length && <li className="empty">아직 울린 알림이 없습니다.</li>}
@@ -274,11 +279,14 @@ export function MatrixModal() {
 }
 
 // ---------- 글 모아보기 ----------
-const SOURCE: Record<FeedSource, string> = { x: 'X', fmkorea: '에펨코리아' };
-const authorLink = (a: Pick<FeedAuthor, 'source' | 'handle'>) =>
-  a.source === 'x'
-    ? `https://x.com/${encodeURIComponent(a.handle)}`
-    : `https://www.fmkorea.com/search.php?mid=stock&search_target=nick_name&search_keyword=${encodeURIComponent(a.handle)}`;
+const SOURCE: Record<FeedSource, string> = { x: 'X', fmkorea: '에펨코리아', tradingview: '트레이딩뷰' };
+const PLACEHOLDER: Record<FeedSource, string> = { x: '@아이디', fmkorea: '닉네임', tradingview: '트레이딩뷰 아이디' };
+function authorLink(a: Pick<FeedAuthor, 'source' | 'handle'>) {
+  const h = encodeURIComponent(a.handle);
+  if (a.source === 'x') return `https://x.com/${h}`;
+  if (a.source === 'tradingview') return `https://www.tradingview.com/u/${h}/`;
+  return `https://www.fmkorea.com/search.php?mid=stock&search_target=nick_name&search_keyword=${h}`;
+}
 
 export function FeedModal() {
   const feedRev = useStore((s) => s.feedRev);
@@ -305,20 +313,21 @@ export function FeedModal() {
 
   if (!feed) {
     return (
-      <Sheet title="글 모아보기">
+      <Sheet title="새 글 알림">
         <div className="empty">불러오는 중…</div>
       </Sheet>
     );
   }
 
   return (
-    <Sheet title="글 모아보기">
+    <Sheet title="새 글 알림">
       <div className="filters">
         <select value={source} onChange={(e) => setSource(e.target.value as FeedSource)}>
-          <option value="x">X 아이디</option>
-          <option value="fmkorea">에펨코리아 닉네임</option>
+          <option value="x">X</option>
+          <option value="tradingview">트레이딩뷰</option>
+          <option value="fmkorea">에펨코리아 주식 게시판</option>
         </select>
-        <input className="search" placeholder={source === 'x' ? '@아이디' : '닉네임'} value={handle} onChange={(e) => setHandle(e.target.value)} />
+        <input className="search" placeholder={PLACEHOLDER[source]} value={handle} onChange={(e) => setHandle(e.target.value)} />
         <label className="check">
           <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} />새 글 알림
         </label>
@@ -335,34 +344,31 @@ export function FeedModal() {
       </div>
 
       <div className="notice">
+        <p>등록한 사람의 새 글을 {feed.intervalMin}분마다 확인해 제목과 링크만 알려 줍니다. 본문은 저장하지 않습니다.</p>
         <p>
           <b>X</b>{' '}
           {feed.xEnabled
-            ? `공식 API 로 ${feed.intervalMin}분마다 글 텍스트를 가져옵니다.`
-            : '자동 수집이 꺼져 있습니다. 서버 .env 에 X_BEARER_TOKEN(X 개발자 포털에서 발급, 요금제에 따라 유료)을 넣으면 켜집니다. 그 전에는 "열기"로 바로 가기만 됩니다.'}
+            ? '공식 API 로 확인합니다.'
+            : '서버 .env 에 X_BEARER_TOKEN(X 개발자 포털에서 발급, 요금제에 따라 유료)을 넣어야 자동 확인이 됩니다.'}
         </p>
         <p>
-          <b>에펨코리아</b> 공식 API 가 없고 자동 수집을 막고 있어 서버가 글을 가져오지 않습니다. "열기"를 누르면 주식 게시판에서 그
-          닉네임을 검색한 화면이 열립니다.
+          <b>트레이딩뷰 · 에펨코리아</b> 공개 화면을 확인합니다. 사이트가 자동 확인을 허용하지 않거나 접속을 막으면 우회하지 않고 그
+          사람 옆에 사유를 표시합니다. 그때도 "열기"로 직접 볼 수 있습니다.
         </p>
       </div>
 
       <div className="panel-title small">
         등록한 사람 {feed.authors.length}명
-        {feed.xEnabled && (
-          <>
-            <select className="right-chip" value={feed.intervalMin} onChange={(e) => call('PUT', '/api/feed/interval', { min: Number(e.target.value) })}>
-              {[5, 15, 30, 60].map((m) => (
-                <option key={m} value={m}>
-                  {m}분마다
-                </option>
-              ))}
-            </select>
-            <button className="chip" disabled={busy} onClick={() => call('POST', '/api/feed/poll')}>
-              지금 가져오기
-            </button>
-          </>
-        )}
+        <select className="right-chip" value={feed.intervalMin} onChange={(e) => call('PUT', '/api/feed/interval', { min: Number(e.target.value) })}>
+          {[5, 15, 30, 60].map((m) => (
+            <option key={m} value={m}>
+              {m}분마다
+            </option>
+          ))}
+        </select>
+        <button className="chip right-chip" disabled={busy || !feed.authors.length} onClick={() => call('POST', '/api/feed/poll')}>
+          지금 확인
+        </button>
       </div>
       <ul className="rows">
         {feed.authors.map((a) => (
@@ -382,27 +388,27 @@ export function FeedModal() {
             </button>
           </li>
         ))}
-        {!feed.authors.length && <li className="empty">X 아이디나 에펨코리아 닉네임을 등록해 보세요.</li>}
+        {!feed.authors.length && <li className="empty">X·트레이딩뷰 아이디나 에펨코리아 닉네임을 등록해 보세요.</li>}
       </ul>
 
       <div className="panel-title small">
-        가져온 글 {feed.posts.length}개 {feed.lastPollAt && <span className="sub">마지막 확인 {stamp(feed.lastPollAt)}</span>}
+        확인한 글 {feed.posts.length}개 {feed.lastPollAt && <span className="sub">마지막 확인 {stamp(feed.lastPollAt)}</span>}
       </div>
       <ul className="rows">
         {feed.posts.map((p) => (
           <li key={p.id} className="row static post">
             <div className="grow">
               <div className="sub">
-                @{p.handle} · {stamp(p.ts)}
+                {SOURCE[p.source]} · {p.handle} · {stamp(p.ts)}
               </div>
               <div className="wrap">{p.text}</div>
             </div>
             <a className="chip" href={p.url} target="_blank" rel="noreferrer noopener">
-              원문
+              열기
             </a>
           </li>
         ))}
-        {!feed.posts.length && <li className="empty">아직 가져온 글이 없습니다.</li>}
+        {!feed.posts.length && <li className="empty">아직 확인한 글이 없습니다.</li>}
       </ul>
     </Sheet>
   );

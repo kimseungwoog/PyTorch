@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Candle, Quote, Stock } from '../../shared/types';
 import { AlertEngine } from '../src/alerts';
 import { PaperBroker } from '../src/broker/paper';
-import { authorLink, Feed } from '../src/feed';
+import { authorLink, Feed, robotsAllows } from '../src/feed';
 import type { MarketProvider } from '../src/market/types';
 import { Risk } from '../src/risk';
 
@@ -137,48 +137,104 @@ describe('알림', () => {
   });
 });
 
-describe('글 모아보기', () => {
+describe('새 글 알림', () => {
   const tweets = (ids: string[]) => ({ data: ids.map((id) => ({ id, text: `글 ${id}`, created_at: '2026-11-22T00:00:00Z' })) });
+  const page = (status: number, body: unknown) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+    text: async () => String(body),
+  });
 
-  it('X 새 글을 가져오고, 처음 가져온 글은 알리지 않는다', async () => {
+  it('X: 처음 확인한 글은 알리지 않고, 그 뒤 새 글만 알린다', async () => {
     const calls: string[] = [];
     const responses = [{ data: { id: '99' } }, tweets(['2', '1']), tweets(['3'])];
     const feed = new Feed('token', undefined, async (url, init) => {
       calls.push(url);
       expect(init?.headers?.Authorization).toBe('Bearer token');
-      return { ok: true, status: 200, json: async () => responses.shift() };
+      return page(200, responses.shift());
     });
     const notified: string[] = [];
-    feed.onNewPosts((posts) => notified.push(...posts.map((p) => p.id)));
+    feed.onNewPosts((posts) => notified.push(...posts.map((p) => p.url)));
     feed.addAuthor('x', '@someone', true);
 
     await feed.poll();
     expect(calls[0]).toContain('/users/by/username/someone');
-    expect(calls[1]).toContain('/users/99/tweets');
     expect(feed.snapshot().posts.map((p) => p.id)).toEqual(['2', '1']);
     expect(notified).toEqual([]);
 
     await feed.poll();
     expect(calls[2]).toContain('since_id=2');
-    expect(notified).toEqual(['3']);
-    expect(feed.snapshot().posts[0].url).toBe('https://x.com/someone/status/3');
+    expect(notified).toEqual(['https://x.com/someone/status/3']);
   });
 
-  it('오류는 그 사람에게 표시하고 계속 진행한다', async () => {
-    const feed = new Feed('token', undefined, async () => ({ ok: false, status: 403, json: async () => ({}) }));
-    feed.addAuthor('x', 'someone', true);
-    await feed.poll();
-    expect(feed.snapshot().authors[0].error).toContain('403');
-  });
-
-  it('토큰이 없으면 가져오지 않고, 에펨코리아는 검색 링크만 만든다', async () => {
-    const feed = new Feed(undefined, undefined, async () => {
+  it('X: 토큰이 없거나 오류가 나면 그 사람에게 표시한다', async () => {
+    const noToken = new Feed(undefined, undefined, async () => {
       throw new Error('호출되면 안 됨');
     });
+    noToken.addAuthor('x', 'someone', true);
+    await noToken.poll();
+    expect(noToken.snapshot().authors[0].error).toContain('토큰');
+
+    const denied = new Feed('token', undefined, async () => page(403, {}));
+    denied.addAuthor('x', 'someone', true);
+    await denied.poll();
+    expect(denied.snapshot().authors[0].error).toContain('403');
+  });
+
+  it('트레이딩뷰: RSS 에서 제목과 링크를 읽고 새 글만 알린다', async () => {
+    const item = (n: number) =>
+      `<item><title><![CDATA[아이디어 ${n}]]></title><link>https://www.tradingview.com/chart/X/${n}/</link><pubDate>Sun, 22 Nov 2026 0${n}:00:00 GMT</pubDate></item>`;
+    let items = [item(1)];
+    const feed = new Feed(undefined, undefined, async (url) =>
+      url.endsWith('/robots.txt') ? page(200, 'User-agent: *\nDisallow: /private/') : page(200, `<rss><channel>${items.join('')}</channel></rss>`),
+    );
+    const notified: string[] = [];
+    feed.onNewPosts((posts) => notified.push(...posts.map((p) => `${p.text}|${p.url}`)));
+    feed.addAuthor('tradingview', 'chartist', true);
+    await feed.poll();
+    items = [item(2), item(1)];
+    await feed.poll();
+    expect(notified).toEqual(['아이디어 2|https://www.tradingview.com/chart/X/2/']);
+    expect(feed.snapshot().posts.map((p) => p.text)).toEqual(['아이디어 2', '아이디어 1']);
+  });
+
+  it('에펨코리아: 검색 화면의 글 링크를 읽는다', async () => {
+    const html = '<a href="/best">인기</a><a href="/1234567890" class="t">삼전 <b>분석</b></a><a href="/index.php?mid=stock&amp;document_srl=1234567891">하닉 전망</a>';
+    const feed = new Feed(undefined, undefined, async (url) => (url.endsWith('/robots.txt') ? page(404, '') : page(200, html)));
     feed.addAuthor('fmkorea', '주식고수', true);
     await feed.poll();
-    expect(feed.snapshot().xEnabled).toBe(false);
+    expect(feed.snapshot().posts.map((p) => [p.text, p.url]).sort()).toEqual([
+      ['삼전 분석', 'https://www.fmkorea.com/1234567890'],
+      ['하닉 전망', 'https://www.fmkorea.com/1234567891'],
+    ]);
+  });
+
+  it('사이트가 허용하지 않거나 막으면 우회하지 않고 알려 준다', async () => {
+    const calls: string[] = [];
+    const disallowed = new Feed(undefined, undefined, async (url) => {
+      calls.push(url);
+      return page(200, 'User-agent: *\nDisallow: /search.php');
+    });
+    disallowed.addAuthor('fmkorea', '주식고수', true);
+    await disallowed.poll();
+    expect(calls).toEqual(['https://www.fmkorea.com/robots.txt']);
+    expect(disallowed.snapshot().authors[0].error).toContain('허용하지 않습니다');
+
+    const blocked = new Feed(undefined, undefined, async (url) => (url.endsWith('/robots.txt') ? page(404, '') : page(430, '')));
+    blocked.addAuthor('fmkorea', '주식고수', true);
+    await blocked.poll();
+    expect(blocked.snapshot().authors[0].error).toContain('430');
+  });
+
+  it('robots.txt 규칙 해석과 바로 가기 주소', () => {
+    const robots = 'User-agent: bad\nDisallow: /\n\nUser-agent: *\nDisallow: /search\nAllow: /search/public\nDisallow: /*.json$';
+    expect(robotsAllows(robots, '/feed/?username=a')).toBe(true);
+    expect(robotsAllows(robots, '/search.php?x=1')).toBe(false);
+    expect(robotsAllows(robots, '/search/public/1')).toBe(true);
+    expect(robotsAllows(robots, '/a/b.json')).toBe(false);
     expect(authorLink({ source: 'fmkorea', handle: '주식고수' })).toContain('search_target=nick_name');
-    expect(() => feed.addAuthor('x', '한글아이디', true)).toThrow();
+    expect(authorLink({ source: 'tradingview', handle: 'chartist' })).toBe('https://www.tradingview.com/u/chartist/');
+    expect(() => new Feed(undefined).addAuthor('x', '한글아이디', true)).toThrow();
   });
 });

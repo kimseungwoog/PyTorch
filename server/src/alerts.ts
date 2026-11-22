@@ -70,8 +70,8 @@ export class AlertEngine {
     this.save();
   }
 
-  push(title: string, body: string, symbol?: string) {
-    const event: AlertEvent = { id: `E${++this.state.seq}`, ts: Date.now(), title, body, symbol };
+  push(title: string, body: string, symbol?: string, url?: string) {
+    const event: AlertEvent = { id: `E${++this.state.seq}`, ts: Date.now(), title, body, symbol, url };
     this.state.events = [event, ...this.state.events].slice(0, 100);
     this.save();
     for (const cb of this.listeners) cb(event);

@@ -204,7 +204,8 @@ export const useStore = create<State>((set, get) => {
         // 체결 알림은 위에서 이미 띄웠다.
         if (!e.title.includes('체결')) get().toast(e.title);
         if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-          new Notification(e.title, { body: e.body });
+          const n = new Notification(e.title, { body: e.body });
+          if (e.url) n.onclick = () => window.open(e.url, '_blank', 'noopener');
         }
         void get().refreshAlerts();
       } else if (msg.type === 'feed') {

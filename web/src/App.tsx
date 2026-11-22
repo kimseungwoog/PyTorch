@@ -75,7 +75,7 @@ export function App() {
           매매 일지
         </button>
         <button className="chip" onClick={() => openModal('feed')}>
-          글 모아보기
+          새 글 알림
         </button>
         {riskBlocked && <span className="badge live">매수 차단 중</span>}
         <span className="spacer" />

@@ -145,6 +145,7 @@ export interface AlertEvent {
   title: string;
   body: string;
   symbol?: string;
+  url?: string; // 새 글 알림의 원문 주소
 }
 
 export interface StrategyMatrixRow {
@@ -153,22 +154,24 @@ export interface StrategyMatrixRow {
   cells: Array<{ strategyId: string; trades: number; winRate: number; totalReturn: number; holding: boolean }>;
 }
 
-// 글 모아보기
-export type FeedSource = 'x' | 'fmkorea';
+// 새 글 알림
+export type FeedSource = 'x' | 'fmkorea' | 'tradingview';
 export interface FeedAuthor {
   id: string;
   source: FeedSource;
-  handle: string; // X 아이디 또는 에펨코리아 닉네임
+  handle: string; // X·트레이딩뷰 아이디 또는 에펨코리아 닉네임
   notify: boolean; // 새 글 알림
   userId?: string;
   lastId?: string;
+  seen?: string[]; // 이미 확인한 글. 처음 확인하기 전에는 없다.
   error?: string;
 }
 export interface FeedPost {
   id: string;
   authorId: string;
+  source: FeedSource;
   handle: string;
-  text: string;
+  text: string; // 제목 또는 글 앞부분
   url: string;
   ts: number;
 }

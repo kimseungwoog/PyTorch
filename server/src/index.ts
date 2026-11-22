@@ -6,6 +6,7 @@ import { INTERVAL_SEC } from '../../shared/market';
 import { replay, STRATEGIES } from '../../shared/strategies';
 import type {
   ClientMessage,
+  FeedSource,
   Interval,
   NewAlertRule,
   OrderRequest,
@@ -183,10 +184,10 @@ app.delete('/api/alerts/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------- 글 모아보기 ----------
+// ---------- 새 글 알림 ----------
 app.get('/api/feed', (_req, res) => res.json(feed.snapshot()));
 app.post('/api/feed/authors', (req, res) => {
-  const b = req.body as { source: 'x' | 'fmkorea'; handle: string; notify?: boolean };
+  const b = req.body as { source: FeedSource; handle: string; notify?: boolean };
   feed.addAuthor(b.source, String(b.handle ?? ''), b.notify !== false);
   void feed.poll().then(() => broadcast({ type: 'feed' }));
   res.status(201).json(feed.snapshot());
@@ -260,8 +261,12 @@ broker.onOrder((o) => {
 
 alerts.onEvent((e) => broadcast({ type: 'alert', data: e }));
 
+const SOURCE_NAME = { x: 'X', fmkorea: '에펨코리아', tradingview: '트레이딩뷰' } as const;
 feed.onNewPosts((posts, author) => {
-  alerts.push(`@${author.handle} 새 글 ${posts.length}개`, posts[0].text.slice(0, 120));
+  // 글마다 링크가 달린 알림을 하나씩 남긴다. 한꺼번에 많이 올라와도 5개까지만 울린다.
+  for (const p of posts.slice(0, 5).reverse()) {
+    alerts.push(`${SOURCE_NAME[author.source]} · ${author.handle} 새 글`, p.text.slice(0, 120), undefined, p.url);
+  }
   broadcast({ type: 'feed' });
 });
 
