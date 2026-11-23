@@ -33,7 +33,7 @@ const maxOrderAmount = Number(env.MAX_ORDER_AMOUNT ?? 5_000_000);
 
 if ((env.MARKET_PROVIDER ?? 'mock') !== 'mock' || (env.BROKER ?? 'paper') !== 'paper') {
   // 증권사 어댑터는 실제 응답 스키마를 확인한 뒤 연결한다 (docs/DESIGN.md 5장).
-  console.error('증권사 연동은 아직 연결 전입니다. 먼저 `npm run toss:probe` 로 응답을 확인해 주세요.');
+  console.error('증권사 연동은 아직 연결 전입니다. 먼저 `npm run kiwoom:probe` 로 응답을 확인해 주세요.');
   process.exit(1);
 }
 

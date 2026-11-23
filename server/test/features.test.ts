@@ -238,3 +238,11 @@ describe('새 글 알림', () => {
     expect(() => new Feed(undefined).addAuthor('x', '한글아이디', true)).toThrow();
   });
 });
+
+describe('키움 클라이언트', () => {
+  it('만료 시각(한국 시간)을 읽고, 읽지 못하면 1시간으로 본다', async () => {
+    const { parseExpiry } = await import('../src/kiwoom/client');
+    expect(parseExpiry('20261123153000')).toBe(Date.UTC(2026, 10, 23, 6, 30, 0));
+    expect(parseExpiry(undefined, 1_000)).toBe(3_601_000);
+  });
+});
